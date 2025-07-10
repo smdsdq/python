@@ -55,7 +55,7 @@ def load_and_decrypt_config() -> Dict:
                 logging.error(f"Missing {key} in config file")
                 raise ValueError(f"Missing {key} in config file")
 
-        fernet = Fernet(config["encryption_token"])
+        fernet = Fernet(config["encryption_token"].encode())  # Convert string to bytes
         decrypted_config = config.copy()
         # Decrypt passwords
         for key in ["api_password", "proxy_password"]:
@@ -80,11 +80,18 @@ def build_json_payload(inputs: AutomationInput, json_template: Dict) -> Dict:
     """Build JSON payload from inputs using the template."""
     payload = json_template.copy()
     payload["id"] = inputs.id
-    payload["data"] = [
-        {"key": "actionType", "value": inputs.actionType},
-        {"key": "serviceName", "value": inputs.serviceName},
-        {"key": "hostname", "value": inputs.hostname}
-    ]
+    # Update variables in extraVariables
+    if "extraVariables" in payload and len(payload["extraVariables"]) > 0:
+        variables = payload["extraVariables"][0]["variables"]
+        for var in variables:
+            if var["key"] == "automation_id":
+                var["value"] = inputs.id
+            elif var["key"] == "actionType":
+                var["value"] = inputs.actionType
+            elif var["key"] == "serviceName":
+                var["value"] = inputs.serviceName
+            elif var["key"] == "hostname":
+                var["value"] = inputs.hostname
     logging.debug(f"Built JSON payload: {payload}")
     return payload
 
@@ -129,7 +136,7 @@ def authenticate(config: Dict, proxies: Dict, proxy_auth: HTTPProxyAuth) -> Opti
         return None
 
 def execute_automation(access_token: str, inputs: AutomationInput, config: Dict, 
-                     proxies: Dict, proxy_auth: HTTPProxyAuth) -> Optional[Dict]:
+                      proxies: Dict, proxy_auth: HTTPProxyAuth) -> Optional[Dict]:
     """Execute the automation with the provided inputs."""
     if not inputs.validate():
         logging.error("Automation failed due to invalid inputs")

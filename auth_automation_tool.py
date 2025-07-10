@@ -8,7 +8,6 @@ import logging
 import os
 import base64
 import urllib.parse
-import ssl
 
 # Set up logging
 LOG_DIR = "logs"
@@ -101,7 +100,7 @@ def build_json_payload(inputs: AutomationInput, json_template: Dict) -> Dict:
     logging.debug(f"Built JSON payload: {payload}")
     return payload
 
-def authenticate(config: Dict, proxies: Dict, verify_ssl: bool = True) -> Optional[str]:
+def authenticate(config: Dict, proxies: Dict, verify_ssl: bool = False) -> Optional[str]:
     """Authenticate with the automation tool and retrieve an access token."""
     payload = {
         "grant_type": "password",
@@ -125,7 +124,7 @@ def authenticate(config: Dict, proxies: Dict, verify_ssl: bool = True) -> Option
             json=payload,
             headers=headers,
             timeout=10,
-            verify=verify_ssl  # Control SSL verification
+            verify=verify_ssl  # Set to False to match working code
         )
         response.raise_for_status()
         response_data = response.json()
@@ -139,7 +138,7 @@ def authenticate(config: Dict, proxies: Dict, verify_ssl: bool = True) -> Option
 
     except requests.exceptions.SSLError as ssl_err:
         logging.error(f"SSL verification failed: {ssl_err}")
-        logging.debug("Try running with --insecure flag or provide a CA certificate bundle")
+        logging.debug("SSL verification is disabled (verify=False). For production, provide a CA certificate bundle.")
         return None
     except requests.exceptions.HTTPError as http_err:
         if http_err.response and http_err.response.status_code == 407:
@@ -160,7 +159,7 @@ def authenticate(config: Dict, proxies: Dict, verify_ssl: bool = True) -> Option
         return None
 
 def execute_automation(access_token: str, inputs: AutomationInput, config: Dict, 
-                      proxies: Dict, verify_ssl: bool = True) -> Optional[Dict]:
+                      proxies: Dict, verify_ssl: bool = False) -> Optional[Dict]:
     """Execute the automation with the provided inputs."""
     if not inputs.validate():
         logging.error("Automation failed due to invalid inputs")
@@ -185,7 +184,7 @@ def execute_automation(access_token: str, inputs: AutomationInput, config: Dict,
             json=payload,
             headers=headers,
             timeout=15,
-            verify=verify_ssl  # Control SSL verification
+            verify=verify_ssl  # Set to False to match working code
         )
         response.raise_for_status()
         response_data = response.json()
@@ -194,7 +193,7 @@ def execute_automation(access_token: str, inputs: AutomationInput, config: Dict,
 
     except requests.exceptions.SSLError as ssl_err:
         logging.error(f"SSL verification failed: {ssl_err}")
-        logging.debug("Try running with --insecure flag or provide a CA certificate bundle")
+        logging.debug("SSL verification is disabled (verify=False). For production, provide a CA certificate bundle.")
         return None
     except requests.exceptions.HTTPError as http_err:
         if http_err.response and http_err.response.status_code == 407:
@@ -221,10 +220,9 @@ def get_command_line_args() -> AutomationInput:
     parser.add_argument("--actionType", required=True, help="Action type (serviceStart, serviceStop, serviceStatus)")
     parser.add_argument("--serviceName", required=True, help="Name of the service")
     parser.add_argument("--hostname", required=True, help="Hostname of the target server")
-    parser.add_argument("--insecure", action="store_true", help="Disable SSL verification (insecure, for debugging)")
     args = parser.parse_args()
     logging.debug(f"Command-line arguments: {args.__dict__}")
-    return AutomationInput(args.id, args.actionType, args.serviceName, args.hostname), args.insecure
+    return AutomationInput(args.id, args.actionType, args.serviceName, args.hostname)
 
 def main():
     # Load and decrypt config
@@ -244,18 +242,17 @@ def main():
     # proxies = {}  # Uncomment for no-proxy debugging
 
     # Get command-line inputs
-    inputs, insecure = get_command_line_args()
-    verify_ssl = not insecure
+    inputs = get_command_line_args()
 
     # Authenticate
-    access_token = authenticate(config, proxies, verify_ssl)
+    access_token = authenticate(config, proxies)
     if not access_token:
         logging.error("Authentication failed. Exiting.")
         print("Authentication failed. Exiting.")
         return
 
     # Execute automation
-    result = execute_automation(access_token, inputs, config, proxies, verify_ssl)
+    result = execute_automation(access_token, inputs, config, proxies)
     if result:
         logging.info("Automation completed successfully.")
         print("Automation completed successfully.")

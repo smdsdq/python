@@ -7,6 +7,7 @@ import argparse
 import logging
 import os
 import base64
+import urllib.parse
 
 # Set up logging
 LOG_DIR = "logs"
@@ -220,9 +221,12 @@ def main():
         print(f"Failed to load or decrypt config: {e}")
         return
 
-    # Set up proxy with credentials in URL
-    proxy_string = f"http://{config['proxy_username']}:{config['proxy_password']}@{config['proxy_host']}:{config['proxy_port']}"
+    # Set up proxy with URL-encoded credentials
+    proxy_username = urllib.parse.quote(config["proxy_username"])
+    proxy_password = urllib.parse.quote(config["proxy_password"])
+    proxy_string = f"http://{proxy_username}:{proxy_password}@{config['proxy_host']}:{config['proxy_port']}"
     proxies = {"https": proxy_string}
+    logging.debug(f"Constructed proxy string: {proxies}")
     # proxies = {}  # Uncomment for no-proxy debugging
 
     # Get command-line inputs

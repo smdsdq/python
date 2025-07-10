@@ -1,0 +1,16 @@
+{
+  "base_url": "https://dev.aa.com",
+  "auth_endpoint": "/auth-service/token/",
+  "automation_endpoint": "/automation/execute/",
+  "proxy_host": "proxy.example.com",
+  "proxy_port": 8080,
+  "api_username": "api_user",
+  "api_password": "<encrypted_api_password>",
+  "proxy_username": "proxy_user",
+  "proxy_password": "<encrypted_proxy_password>",
+  "encryption_token": "<fernet_key_in_plain_text>",
+  "json_template": {
+    "id": "default_id",
+    "data": []
+  }
+}

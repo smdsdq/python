@@ -63,7 +63,12 @@ def load_and_decrypt_config() -> Dict:
             decrypted_value = fernet.decrypt(encrypted_value).decode()
             decrypted_config[key] = decrypted_value
         
+        # Log proxy details (mask password)
         logging.debug(f"Loaded and decrypted config: { {k: v if k not in ['api_password', 'proxy_password', 'encryption_token'] else '****' for k, v in decrypted_config.items()} }")
+        logging.debug(f"Proxy configuration: host={config['proxy_host']}, port={config['proxy_port']}, username={config['proxy_username']}, password=****")
+        # Temporary debug logging for decrypted credentials (remove after debugging)
+        logging.debug(f"Decrypted proxy_username: {decrypted_config['proxy_username']}")
+        logging.debug(f"Decrypted proxy_password: {decrypted_config['proxy_password']}")
         return decrypted_config
     
     except FileNotFoundError:
@@ -102,17 +107,28 @@ def authenticate(config: Dict, proxies: Dict, proxy_auth: HTTPProxyAuth) -> Opti
         "username": config["api_username"],
         "password": config["api_password"]
     }
-    headers = {"Content-Type": "application/json"}
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "curl/7.68.0"  # Mimic curl's User-Agent
+    }
+    # Add explicit Proxy-Authorization header
+    if proxy_auth:
+        auth_str = f"{proxy_auth.username}:{proxy_auth.password}"
+        headers["Proxy-Authorization"] = f"Basic {base64.b64encode(auth_str.encode()).decode()}"
 
     try:
         logging.info("Attempting authentication")
-        response = requests.post(
+        session = requests.Session()
+        session.proxies = proxies
+        # Log raw request headers
+        logging.debug(f"Authentication request headers: {headers}")
+        logging.debug(f"Authentication proxies: {proxies}")
+        response = session.post(
             f"{config['base_url']}{config['auth_endpoint']}",
             json=payload,
             headers=headers,
-            proxies=proxies,
-            auth=proxy_auth,
-            timeout=10
+            timeout=10,
+            verify=False  # Disable SSL verification for debugging (remove in production)
         )
         response.raise_for_status()
         response_data = response.json()
@@ -125,8 +141,15 @@ def authenticate(config: Dict, proxies: Dict, proxy_auth: HTTPProxyAuth) -> Opti
         return access_token
 
     except requests.exceptions.HTTPError as http_err:
-        logging.error(f"Authentication HTTP error: {http_err}")
-        logging.debug(f"Response: {response.text}")
+        if http_err.response and http_err.response.status_code == 407:
+            logging.error("Proxy authentication failed: 407 Proxy Authentication Required")
+            logging.debug(f"Proxy details: {proxies}, auth={proxy_auth.username if proxy_auth else None}:****")
+        else:
+            logging.error(f"Authentication HTTP error: {http_err}")
+            logging.debug(f"Response: {http_err.response.text if http_err.response else 'No response'}")
+        return None
+    except requests.exceptions.ProxyError as proxy_err:
+        logging.error(f"Proxy error: {proxy_err}")
         return None
     except requests.exceptions.RequestException as req_err:
         logging.error(f"Authentication request error: {req_err}")
@@ -145,18 +168,27 @@ def execute_automation(access_token: str, inputs: AutomationInput, config: Dict,
     payload = build_json_payload(inputs, config["json_template"])
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {access_token}"
+        "Authorization": f"Bearer {access_token}",
+        "User-Agent": "curl/7.68.0"  # Mimic curl's User-Agent
     }
+    # Add explicit Proxy-Authorization header
+    if proxy_auth:
+        auth_str = f"{proxy_auth.username}:{proxy_auth.password}"
+        headers["Proxy-Authorization"] = f"Basic {base64.b64encode(auth_str.encode()).decode()}"
 
     try:
         logging.info(f"Executing automation for {inputs.serviceName} ({inputs.actionType}) on {inputs.hostname}")
-        response = requests.post(
+        session = requests.Session()
+        session.proxies = proxies
+        # Log raw request headers
+        logging.debug(f"Automation request headers: {headers}")
+        logging.debug(f"Automation proxies: {proxies}")
+        response = session.post(
             f"{config['base_url']}{config['automation_endpoint']}",
             json=payload,
             headers=headers,
-            proxies=proxies,
-            auth=proxy_auth,
-            timeout=15
+            timeout=15,
+            verify=False  # Disable SSL verification for debugging (remove in production)
         )
         response.raise_for_status()
         response_data = response.json()
@@ -164,8 +196,15 @@ def execute_automation(access_token: str, inputs: AutomationInput, config: Dict,
         return response_data
 
     except requests.exceptions.HTTPError as http_err:
-        logging.error(f"Automation HTTP error: {http_err}")
-        logging.debug(f"Response: {response.text}")
+        if http_err.response and http_err.response.status_code == 407:
+            logging.error("Proxy authentication failed: 407 Proxy Authentication Required")
+            logging.debug(f"Proxy details: {proxies}, auth={proxy_auth.username if proxy_auth else None}:****")
+        else:
+            logging.error(f"Automation HTTP error: {http_err}")
+            logging.debug(f"Response: {http_err.response.text if http_err.response else 'No response'}")
+        return None
+    except requests.exceptions.ProxyError as proxy_err:
+        logging.error(f"Automation proxy error: {proxy_err}")
         return None
     except requests.exceptions.RequestException as req_err:
         logging.error(f"Automation request error: {req_err}")
@@ -194,9 +233,11 @@ def main():
         print(f"Failed to load or decrypt config: {e}")
         return
 
-    # Set up proxy
+    # Set up proxy (comment out for no-proxy debugging)
     proxies = {"https": f"http://{config['proxy_host']}:{config['proxy_port']}"}
     proxy_auth = HTTPProxyAuth(config["proxy_username"], config["proxy_password"])
+    # proxies = {}  # Uncomment for no-proxy debugging
+    # proxy_auth = None  # Uncomment for no-proxy debugging
 
     # Get command-line inputs
     inputs = get_command_line_args()

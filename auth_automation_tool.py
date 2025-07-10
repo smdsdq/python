@@ -8,6 +8,7 @@ import logging
 import os
 import base64
 import urllib.parse
+import ssl
 
 # Set up logging
 LOG_DIR = "logs"
@@ -100,7 +101,7 @@ def build_json_payload(inputs: AutomationInput, json_template: Dict) -> Dict:
     logging.debug(f"Built JSON payload: {payload}")
     return payload
 
-def authenticate(config: Dict, proxies: Dict) -> Optional[str]:
+def authenticate(config: Dict, proxies: Dict, verify_ssl: bool = True) -> Optional[str]:
     """Authenticate with the automation tool and retrieve an access token."""
     payload = {
         "grant_type": "password",
@@ -118,11 +119,13 @@ def authenticate(config: Dict, proxies: Dict) -> Optional[str]:
         session.proxies = proxies
         logging.debug(f"Authentication request headers: {headers}")
         logging.debug(f"Authentication proxies: {proxies}")
+        logging.debug(f"SSL verification: {verify_ssl}")
         response = session.post(
             f"{config['base_url']}{config['auth_endpoint']}",
             json=payload,
             headers=headers,
-            timeout=10
+            timeout=10,
+            verify=verify_ssl  # Control SSL verification
         )
         response.raise_for_status()
         response_data = response.json()
@@ -134,6 +137,10 @@ def authenticate(config: Dict, proxies: Dict) -> Optional[str]:
         logging.debug(f"Authentication response: {response_data}")
         return access_token
 
+    except requests.exceptions.SSLError as ssl_err:
+        logging.error(f"SSL verification failed: {ssl_err}")
+        logging.debug("Try running with --insecure flag or provide a CA certificate bundle")
+        return None
     except requests.exceptions.HTTPError as http_err:
         if http_err.response and http_err.response.status_code == 407:
             logging.error("Proxy authentication failed: 407 Proxy Authentication Required")
@@ -153,7 +160,7 @@ def authenticate(config: Dict, proxies: Dict) -> Optional[str]:
         return None
 
 def execute_automation(access_token: str, inputs: AutomationInput, config: Dict, 
-                      proxies: Dict) -> Optional[Dict]:
+                      proxies: Dict, verify_ssl: bool = True) -> Optional[Dict]:
     """Execute the automation with the provided inputs."""
     if not inputs.validate():
         logging.error("Automation failed due to invalid inputs")
@@ -172,17 +179,23 @@ def execute_automation(access_token: str, inputs: AutomationInput, config: Dict,
         session.proxies = proxies
         logging.debug(f"Automation request headers: {headers}")
         logging.debug(f"Automation proxies: {proxies}")
+        logging.debug(f"SSL verification: {verify_ssl}")
         response = session.post(
             f"{config['base_url']}{config['automation_endpoint']}",
             json=payload,
             headers=headers,
-            timeout=15
+            timeout=15,
+            verify=verify_ssl  # Control SSL verification
         )
         response.raise_for_status()
         response_data = response.json()
         logging.info(f"Automation executed successfully: {response_data}")
         return response_data
 
+    except requests.exceptions.SSLError as ssl_err:
+        logging.error(f"SSL verification failed: {ssl_err}")
+        logging.debug("Try running with --insecure flag or provide a CA certificate bundle")
+        return None
     except requests.exceptions.HTTPError as http_err:
         if http_err.response and http_err.response.status_code == 407:
             logging.error("Proxy authentication failed: 407 Proxy Authentication Required")
@@ -208,9 +221,10 @@ def get_command_line_args() -> AutomationInput:
     parser.add_argument("--actionType", required=True, help="Action type (serviceStart, serviceStop, serviceStatus)")
     parser.add_argument("--serviceName", required=True, help="Name of the service")
     parser.add_argument("--hostname", required=True, help="Hostname of the target server")
+    parser.add_argument("--insecure", action="store_true", help="Disable SSL verification (insecure, for debugging)")
     args = parser.parse_args()
     logging.debug(f"Command-line arguments: {args.__dict__}")
-    return AutomationInput(args.id, args.actionType, args.serviceName, args.hostname)
+    return AutomationInput(args.id, args.actionType, args.serviceName, args.hostname), args.insecure
 
 def main():
     # Load and decrypt config
@@ -230,17 +244,18 @@ def main():
     # proxies = {}  # Uncomment for no-proxy debugging
 
     # Get command-line inputs
-    inputs = get_command_line_args()
+    inputs, insecure = get_command_line_args()
+    verify_ssl = not insecure
 
     # Authenticate
-    access_token = authenticate(config, proxies)
+    access_token = authenticate(config, proxies, verify_ssl)
     if not access_token:
         logging.error("Authentication failed. Exiting.")
         print("Authentication failed. Exiting.")
         return
 
     # Execute automation
-    result = execute_automation(access_token, inputs, config, proxies)
+    result = execute_automation(access_token, inputs, config, proxies, verify_ssl)
     if result:
         logging.info("Automation completed successfully.")
         print("Automation completed successfully.")

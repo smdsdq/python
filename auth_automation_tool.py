@@ -1,5 +1,4 @@
 import requests
-from requests.auth import HTTPProxyAuth
 import json
 from typing import Optional, Dict
 from dataclasses import dataclass
@@ -100,7 +99,7 @@ def build_json_payload(inputs: AutomationInput, json_template: Dict) -> Dict:
     logging.debug(f"Built JSON payload: {payload}")
     return payload
 
-def authenticate(config: Dict, proxies: Dict, proxy_auth: HTTPProxyAuth) -> Optional[str]:
+def authenticate(config: Dict, proxies: Dict) -> Optional[str]:
     """Authenticate with the automation tool and retrieve an access token."""
     payload = {
         "grant_type": "password",
@@ -111,24 +110,18 @@ def authenticate(config: Dict, proxies: Dict, proxy_auth: HTTPProxyAuth) -> Opti
         "Content-Type": "application/json",
         "User-Agent": "curl/7.68.0"  # Mimic curl's User-Agent
     }
-    # Add explicit Proxy-Authorization header
-    if proxy_auth:
-        auth_str = f"{proxy_auth.username}:{proxy_auth.password}"
-        headers["Proxy-Authorization"] = f"Basic {base64.b64encode(auth_str.encode()).decode()}"
 
     try:
         logging.info("Attempting authentication")
         session = requests.Session()
         session.proxies = proxies
-        # Log raw request headers
         logging.debug(f"Authentication request headers: {headers}")
         logging.debug(f"Authentication proxies: {proxies}")
         response = session.post(
             f"{config['base_url']}{config['auth_endpoint']}",
             json=payload,
             headers=headers,
-            timeout=10,
-            verify=False  # Disable SSL verification for debugging (remove in production)
+            timeout=10
         )
         response.raise_for_status()
         response_data = response.json()
@@ -143,7 +136,7 @@ def authenticate(config: Dict, proxies: Dict, proxy_auth: HTTPProxyAuth) -> Opti
     except requests.exceptions.HTTPError as http_err:
         if http_err.response and http_err.response.status_code == 407:
             logging.error("Proxy authentication failed: 407 Proxy Authentication Required")
-            logging.debug(f"Proxy details: {proxies}, auth={proxy_auth.username if proxy_auth else None}:****")
+            logging.debug(f"Proxy details: {proxies}")
         else:
             logging.error(f"Authentication HTTP error: {http_err}")
             logging.debug(f"Response: {http_err.response.text if http_err.response else 'No response'}")
@@ -159,7 +152,7 @@ def authenticate(config: Dict, proxies: Dict, proxy_auth: HTTPProxyAuth) -> Opti
         return None
 
 def execute_automation(access_token: str, inputs: AutomationInput, config: Dict, 
-                      proxies: Dict, proxy_auth: HTTPProxyAuth) -> Optional[Dict]:
+                      proxies: Dict) -> Optional[Dict]:
     """Execute the automation with the provided inputs."""
     if not inputs.validate():
         logging.error("Automation failed due to invalid inputs")
@@ -171,24 +164,18 @@ def execute_automation(access_token: str, inputs: AutomationInput, config: Dict,
         "Authorization": f"Bearer {access_token}",
         "User-Agent": "curl/7.68.0"  # Mimic curl's User-Agent
     }
-    # Add explicit Proxy-Authorization header
-    if proxy_auth:
-        auth_str = f"{proxy_auth.username}:{proxy_auth.password}"
-        headers["Proxy-Authorization"] = f"Basic {base64.b64encode(auth_str.encode()).decode()}"
 
     try:
         logging.info(f"Executing automation for {inputs.serviceName} ({inputs.actionType}) on {inputs.hostname}")
         session = requests.Session()
         session.proxies = proxies
-        # Log raw request headers
         logging.debug(f"Automation request headers: {headers}")
         logging.debug(f"Automation proxies: {proxies}")
         response = session.post(
             f"{config['base_url']}{config['automation_endpoint']}",
             json=payload,
             headers=headers,
-            timeout=15,
-            verify=False  # Disable SSL verification for debugging (remove in production)
+            timeout=15
         )
         response.raise_for_status()
         response_data = response.json()
@@ -198,7 +185,7 @@ def execute_automation(access_token: str, inputs: AutomationInput, config: Dict,
     except requests.exceptions.HTTPError as http_err:
         if http_err.response and http_err.response.status_code == 407:
             logging.error("Proxy authentication failed: 407 Proxy Authentication Required")
-            logging.debug(f"Proxy details: {proxies}, auth={proxy_auth.username if proxy_auth else None}:****")
+            logging.debug(f"Proxy details: {proxies}")
         else:
             logging.error(f"Automation HTTP error: {http_err}")
             logging.debug(f"Response: {http_err.response.text if http_err.response else 'No response'}")
@@ -233,24 +220,23 @@ def main():
         print(f"Failed to load or decrypt config: {e}")
         return
 
-    # Set up proxy (comment out for no-proxy debugging)
-    proxies = {"https": f"http://{config['proxy_host']}:{config['proxy_port']}"}
-    proxy_auth = HTTPProxyAuth(config["proxy_username"], config["proxy_password"])
+    # Set up proxy with credentials in URL
+    proxy_string = f"http://{config['proxy_username']}:{config['proxy_password']}@{config['proxy_host']}:{config['proxy_port']}"
+    proxies = {"https": proxy_string}
     # proxies = {}  # Uncomment for no-proxy debugging
-    # proxy_auth = None  # Uncomment for no-proxy debugging
 
     # Get command-line inputs
     inputs = get_command_line_args()
 
     # Authenticate
-    access_token = authenticate(config, proxies, proxy_auth)
+    access_token = authenticate(config, proxies)
     if not access_token:
         logging.error("Authentication failed. Exiting.")
         print("Authentication failed. Exiting.")
         return
 
     # Execute automation
-    result = execute_automation(access_token, inputs, config, proxies, proxy_auth)
+    result = execute_automation(access_token, inputs, config, proxies)
     if result:
         logging.info("Automation completed successfully.")
         print("Automation completed successfully.")

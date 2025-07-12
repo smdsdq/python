@@ -124,7 +124,7 @@ def authenticate(config: Dict, proxies: Dict, verify_ssl: str) -> Optional[str]:
             json=payload,
             headers=headers,
             timeout=10,
-            verify=verify_ssl  # Use CA certificate path
+            verify=verify_ssl  # Use CA certificate for proxy
         )
         response.raise_for_status()
         response_data = response.json()
@@ -138,7 +138,7 @@ def authenticate(config: Dict, proxies: Dict, verify_ssl: str) -> Optional[str]:
 
     except requests.exceptions.SSLError as ssl_err:
         logging.error(f"SSL verification failed: {ssl_err}")
-        logging.debug(f"Check CA certificate bundle at {verify_ssl} or try running with verify=False for debugging")
+        logging.debug(f"Check CA certificate bundle at {verify_ssl} or try verify=False for debugging")
         return None
     except requests.exceptions.HTTPError as http_err:
         if http_err.response and http_err.response.status_code == 407:
@@ -184,7 +184,7 @@ def execute_automation(access_token: str, inputs: AutomationInput, config: Dict,
             json=payload,
             headers=headers,
             timeout=15,
-            verify=verify_ssl  # Use CA certificate path
+            verify=verify_ssl  # Use CA certificate for proxy
         )
         response.raise_for_status()
         response_data = response.json()
@@ -193,7 +193,7 @@ def execute_automation(access_token: str, inputs: AutomationInput, config: Dict,
 
     except requests.exceptions.SSLError as ssl_err:
         logging.error(f"SSL verification failed: {ssl_err}")
-        logging.debug(f"Check CA certificate bundle at {verify_ssl} or try running with verify=False for debugging")
+        logging.debug(f"Check CA certificate bundle at {verify_ssl} or try verify=False for debugging")
         return None
     except requests.exceptions.HTTPError as http_err:
         if http_err.response and http_err.response.status_code == 407:
@@ -236,13 +236,20 @@ def main():
     # Set up proxy with URL-encoded credentials
     proxy_username = urllib.parse.quote(config["proxy_username"])
     proxy_password = urllib.parse.quote(config["proxy_password"])
-    proxy_string = f"http://{proxy_username}:{proxy_password}@{config['proxy_host']}:{config['proxy_port']}"
-    proxies = {"https": proxy_string}
+    # Try HTTPS proxy first, as CA certificate suggests proxy SSL verification
+    proxy_string = f"https://{proxy_username}:{proxy_password}@{config['proxy_host']}:{config['proxy_port']}"
+    proxies = {
+        "https": proxy_string,
+        "http": proxy_string  # Include both for robustness
+    }
     logging.debug(f"Constructed proxy string: {proxies}")
     # proxies = {}  # Uncomment for no-proxy debugging
+    # Alternative: Use HTTP proxy if HTTPS fails
+    # proxy_string = f"http://{proxy_username}:{proxy_password}@{config['proxy_host']}:{config['proxy_port']}"
+    # proxies = {"https": proxy_string, "http": proxy_string}
 
-    # Set CA certificate path
-    verify_ssl = "/path/to/ca_bundle.pem"  # Update with actual path to CA certificate
+    # Set CA certificate path for proxy
+    verify_ssl = "/path/to/ca_bundle.pem"  # Update with actual path to proxy CA certificate
 
     # Get command-line inputs
     inputs = get_command_line_args()

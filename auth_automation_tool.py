@@ -100,7 +100,7 @@ def build_json_payload(inputs: AutomationInput, json_template: Dict) -> Dict:
     logging.debug(f"Built JSON payload: {payload}")
     return payload
 
-def authenticate(config: Dict, proxies: Dict, verify_ssl: bool = False) -> Optional[str]:
+def authenticate(config: Dict, proxies: Dict, verify_ssl: str) -> Optional[str]:
     """Authenticate with the automation tool and retrieve an access token."""
     payload = {
         "grant_type": "password",
@@ -118,13 +118,13 @@ def authenticate(config: Dict, proxies: Dict, verify_ssl: bool = False) -> Optio
         session.proxies = proxies
         logging.debug(f"Authentication request headers: {headers}")
         logging.debug(f"Authentication proxies: {proxies}")
-        logging.debug(f"SSL verification: {verify_ssl}")
+        logging.debug(f"SSL verification: Using CA bundle {verify_ssl}")
         response = session.post(
             f"{config['base_url']}{config['auth_endpoint']}",
             json=payload,
             headers=headers,
             timeout=10,
-            verify=verify_ssl  # Set to False to match working code
+            verify=verify_ssl  # Use CA certificate path
         )
         response.raise_for_status()
         response_data = response.json()
@@ -138,7 +138,7 @@ def authenticate(config: Dict, proxies: Dict, verify_ssl: bool = False) -> Optio
 
     except requests.exceptions.SSLError as ssl_err:
         logging.error(f"SSL verification failed: {ssl_err}")
-        logging.debug("SSL verification is disabled (verify=False). For production, provide a CA certificate bundle.")
+        logging.debug(f"Check CA certificate bundle at {verify_ssl} or try running with verify=False for debugging")
         return None
     except requests.exceptions.HTTPError as http_err:
         if http_err.response and http_err.response.status_code == 407:
@@ -159,7 +159,7 @@ def authenticate(config: Dict, proxies: Dict, verify_ssl: bool = False) -> Optio
         return None
 
 def execute_automation(access_token: str, inputs: AutomationInput, config: Dict, 
-                      proxies: Dict, verify_ssl: bool = False) -> Optional[Dict]:
+                      proxies: Dict, verify_ssl: str) -> Optional[Dict]:
     """Execute the automation with the provided inputs."""
     if not inputs.validate():
         logging.error("Automation failed due to invalid inputs")
@@ -178,13 +178,13 @@ def execute_automation(access_token: str, inputs: AutomationInput, config: Dict,
         session.proxies = proxies
         logging.debug(f"Automation request headers: {headers}")
         logging.debug(f"Automation proxies: {proxies}")
-        logging.debug(f"SSL verification: {verify_ssl}")
+        logging.debug(f"SSL verification: Using CA bundle {verify_ssl}")
         response = session.post(
             f"{config['base_url']}{config['automation_endpoint']}",
             json=payload,
             headers=headers,
             timeout=15,
-            verify=verify_ssl  # Set to False to match working code
+            verify=verify_ssl  # Use CA certificate path
         )
         response.raise_for_status()
         response_data = response.json()
@@ -193,7 +193,7 @@ def execute_automation(access_token: str, inputs: AutomationInput, config: Dict,
 
     except requests.exceptions.SSLError as ssl_err:
         logging.error(f"SSL verification failed: {ssl_err}")
-        logging.debug("SSL verification is disabled (verify=False). For production, provide a CA certificate bundle.")
+        logging.debug(f"Check CA certificate bundle at {verify_ssl} or try running with verify=False for debugging")
         return None
     except requests.exceptions.HTTPError as http_err:
         if http_err.response and http_err.response.status_code == 407:
@@ -241,18 +241,21 @@ def main():
     logging.debug(f"Constructed proxy string: {proxies}")
     # proxies = {}  # Uncomment for no-proxy debugging
 
+    # Set CA certificate path
+    verify_ssl = "/path/to/ca_bundle.pem"  # Update with actual path to CA certificate
+
     # Get command-line inputs
     inputs = get_command_line_args()
 
     # Authenticate
-    access_token = authenticate(config, proxies)
+    access_token = authenticate(config, proxies, verify_ssl)
     if not access_token:
         logging.error("Authentication failed. Exiting.")
         print("Authentication failed. Exiting.")
         return
 
     # Execute automation
-    result = execute_automation(access_token, inputs, config, proxies)
+    result = execute_automation(access_token, inputs, config, proxies, verify_ssl)
     if result:
         logging.info("Automation completed successfully.")
         print("Automation completed successfully.")

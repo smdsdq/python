@@ -81,6 +81,35 @@ def load_and_decrypt_config() -> Dict:
         logging.error(f"Error decrypting config: {e}")
         raise
 
+def test_proxy_connection(base_url: str, proxies: Dict, verify_ssl: str | bool) -> bool:
+    """Test proxy connection by making a GET request to the base URL."""
+    try:
+        logging.info(f"Testing proxy connection to {base_url}")
+        session = requests.Session()
+        session.proxies = proxies
+        headers = {"User-Agent": "curl/7.68.0"}  # Mimic curl
+        logging.debug(f"Proxy test headers: {headers}")
+        logging.debug(f"Proxy test proxies: {proxies}")
+        logging.debug(f"Proxy test SSL verification: {verify_ssl if isinstance(verify_ssl, str) else 'Disabled (verify=False)'}")
+        response = session.get(base_url, headers=headers, timeout=10, verify=verify_ssl)
+        response.raise_for_status()
+        logging.info(f"Proxy connection test successful: Status {response.status_code}")
+        return True
+    except requests.exceptions.SSLError as ssl_err:
+        logging.error(f"Proxy connection test failed due to SSL error: {ssl_err}")
+        logging.debug(f"Check CA certificate bundle at {verify_ssl} or use --use-ssl=False")
+        return False
+    except requests.exceptions.HTTPError as http_err:
+        logging.error(f"Proxy connection test failed due to HTTP error: {http_err}")
+        logging.debug(f"Response: {http_err.response.text if http_err.response else 'No response'}")
+        return False
+    except requests.exceptions.ProxyError as proxy_err:
+        logging.error(f"Proxy connection test failed due to proxy error: {proxy_err}")
+        return False
+    except requests.exceptions.RequestException as req_err:
+        logging.error(f"Proxy connection test failed: {req_err}")
+        return False
+
 def build_json_payload(inputs: AutomationInput, json_template: Dict) -> Dict:
     """Build JSON payload from inputs using the template."""
     payload = json_template.copy()
@@ -100,7 +129,7 @@ def build_json_payload(inputs: AutomationInput, json_template: Dict) -> Dict:
     logging.debug(f"Built JSON payload: {payload}")
     return payload
 
-def authenticate(config: Dict, proxies: Dict, verify_ssl: str) -> Optional[str]:
+def authenticate(config: Dict, proxies: Dict, verify_ssl: str | bool) -> Optional[str]:
     """Authenticate with the automation tool and retrieve an access token."""
     payload = {
         "grant_type": "password",
@@ -118,13 +147,13 @@ def authenticate(config: Dict, proxies: Dict, verify_ssl: str) -> Optional[str]:
         session.proxies = proxies
         logging.debug(f"Authentication request headers: {headers}")
         logging.debug(f"Authentication proxies: {proxies}")
-        logging.debug(f"SSL verification: Using CA bundle {verify_ssl}")
+        logging.debug(f"SSL verification: {verify_ssl if isinstance(verify_ssl, str) else 'Disabled (verify=False)'}")
         response = session.post(
             f"{config['base_url']}{config['auth_endpoint']}",
             json=payload,
             headers=headers,
             timeout=10,
-            verify=verify_ssl  # Use CA certificate for proxy
+            verify=verify_ssl
         )
         response.raise_for_status()
         response_data = response.json()
@@ -138,7 +167,7 @@ def authenticate(config: Dict, proxies: Dict, verify_ssl: str) -> Optional[str]:
 
     except requests.exceptions.SSLError as ssl_err:
         logging.error(f"SSL verification failed: {ssl_err}")
-        logging.debug(f"Check CA certificate bundle at {verify_ssl} or try verify=False for debugging")
+        logging.debug(f"Check CA certificate bundle at {verify_ssl} or use --use-ssl=False")
         return None
     except requests.exceptions.HTTPError as http_err:
         if http_err.response and http_err.response.status_code == 407:
@@ -159,7 +188,7 @@ def authenticate(config: Dict, proxies: Dict, verify_ssl: str) -> Optional[str]:
         return None
 
 def execute_automation(access_token: str, inputs: AutomationInput, config: Dict, 
-                      proxies: Dict, verify_ssl: str) -> Optional[Dict]:
+                      proxies: Dict, verify_ssl: str | bool) -> Optional[Dict]:
     """Execute the automation with the provided inputs."""
     if not inputs.validate():
         logging.error("Automation failed due to invalid inputs")
@@ -178,13 +207,13 @@ def execute_automation(access_token: str, inputs: AutomationInput, config: Dict,
         session.proxies = proxies
         logging.debug(f"Automation request headers: {headers}")
         logging.debug(f"Automation proxies: {proxies}")
-        logging.debug(f"SSL verification: Using CA bundle {verify_ssl}")
+        logging.debug(f"SSL verification: {verify_ssl if isinstance(verify_ssl, str) else 'Disabled (verify=False)'}")
         response = session.post(
             f"{config['base_url']}{config['automation_endpoint']}",
             json=payload,
             headers=headers,
             timeout=15,
-            verify=verify_ssl  # Use CA certificate for proxy
+            verify=verify_ssl
         )
         response.raise_for_status()
         response_data = response.json()
@@ -193,7 +222,7 @@ def execute_automation(access_token: str, inputs: AutomationInput, config: Dict,
 
     except requests.exceptions.SSLError as ssl_err:
         logging.error(f"SSL verification failed: {ssl_err}")
-        logging.debug(f"Check CA certificate bundle at {verify_ssl} or try verify=False for debugging")
+        logging.debug(f"Check CA certificate bundle at {verify_ssl} or use --use-ssl=False")
         return None
     except requests.exceptions.HTTPError as http_err:
         if http_err.response and http_err.response.status_code == 407:
@@ -213,16 +242,17 @@ def execute_automation(access_token: str, inputs: AutomationInput, config: Dict,
         logging.error(f"Automation JSON parsing error: {json_err}")
         return None
 
-def get_command_line_args() -> AutomationInput:
-    """Parse command-line arguments for automation inputs."""
+def get_command_line_args() -> tuple[AutomationInput, bool]:
+    """Parse command-line arguments for automation inputs and SSL option."""
     parser = argparse.ArgumentParser(description="Execute automation with dynamic inputs")
     parser.add_argument("--id", required=True, help="Automation ID")
     parser.add_argument("--actionType", required=True, help="Action type (serviceStart, serviceStop, serviceStatus)")
     parser.add_argument("--serviceName", required=True, help="Name of the service")
     parser.add_argument("--hostname", required=True, help="Hostname of the target server")
+    parser.add_argument("--use-ssl", action="store_true", help="Enable SSL verification with CA certificate (default: False)")
     args = parser.parse_args()
     logging.debug(f"Command-line arguments: {args.__dict__}")
-    return AutomationInput(args.id, args.actionType, args.serviceName, args.hostname)
+    return AutomationInput(args.id, args.actionType, args.serviceName, args.hostname), args.use_ssl
 
 def main():
     # Load and decrypt config
@@ -236,23 +266,23 @@ def main():
     # Set up proxy with URL-encoded credentials
     proxy_username = urllib.parse.quote(config["proxy_username"])
     proxy_password = urllib.parse.quote(config["proxy_password"])
-    # Try HTTPS proxy first, as CA certificate suggests proxy SSL verification
-    proxy_string = f"https://{proxy_username}:{proxy_password}@{config['proxy_host']}:{config['proxy_port']}"
+    proxy_string = f"http://{proxy_username}:{proxy_password}@{config['proxy_host']}:{config['proxy_port']}"
     proxies = {
         "https": proxy_string,
-        "http": proxy_string  # Include both for robustness
+        "http": proxy_string
     }
     logging.debug(f"Constructed proxy string: {proxies}")
     # proxies = {}  # Uncomment for no-proxy debugging
-    # Alternative: Use HTTP proxy if HTTPS fails
-    # proxy_string = f"http://{proxy_username}:{proxy_password}@{config['proxy_host']}:{config['proxy_port']}"
-    # proxies = {"https": proxy_string, "http": proxy_string}
 
-    # Set CA certificate path for proxy
-    verify_ssl = "/path/to/ca_bundle.pem"  # Update with actual path to proxy CA certificate
+    # Get command-line inputs and SSL option
+    inputs, use_ssl = get_command_line_args()
+    verify_ssl = "/path/to/ca_bundle.pem" if use_ssl else False  # Update with actual CA certificate path
 
-    # Get command-line inputs
-    inputs = get_command_line_args()
+    # Test proxy connection
+    if not test_proxy_connection(config["base_url"], proxies, verify_ssl):
+        logging.error("Proxy connection test failed. Exiting.")
+        print("Proxy connection test failed. Check logs for details.")
+        return
 
     # Authenticate
     access_token = authenticate(config, proxies, verify_ssl)
